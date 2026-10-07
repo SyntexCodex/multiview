@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MultiView — watch several videos side by side</title>
+<style>
+  :root{
+    --bg:#0f1115; --panel:#171a21; --border:#262b36; --text:#e8eaf0;
+    --muted:#9aa3b2; --accent:#4f8cff; --accent-dim:#2b4a80; --danger:#e5484d;
+  }
+  *{box-sizing:border-box; margin:0; padding:0}
+  body{background:var(--bg); color:var(--text); font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; min-height:100vh; display:flex; flex-direction:column}
+  header{padding:18px 22px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:12px; flex-wrap:wrap}
+  header h1{font-size:20px; font-weight:700; letter-spacing:.3px}
+  header h1 span{color:var(--accent)}
+  header p{color:var(--muted); font-size:13px; flex-basis:100%}
+  main{flex:1; padding:18px 22px; display:flex; flex-direction:column; gap:14px; max-width:1400px; width:100%; margin:0 auto}
+  .controls{background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:16px; display:flex; flex-direction:column; gap:10px}
+  .row{display:flex; gap:10px; flex-wrap:wrap}
+  input[type=text]{flex:1; min-width:220px; background:#0c0e12; border:1px solid var(--border); color:var(--text); border-radius:8px; padding:10px 12px; font-size:14px; outline:none}
+  input[type=text]:focus{border-color:var(--accent)}
+  button{background:var(--accent); color:#fff; border:none; border-radius:8px; padding:10px 18px; font-size:14px; font-weight:600; cursor:pointer}
+  button:hover{filter:brightness(1.1)}
+  button.ghost{background:transparent; border:1px solid var(--border); color:var(--muted)}
+  button.ghost:hover{color:var(--text); border-color:var(--muted)}
+  button.danger{background:transparent; border:1px solid var(--danger); color:var(--danger)}
+  .hint{color:var(--muted); font-size:12.5px}
+  #grid{display:grid; gap:12px; grid-template-columns:repeat(auto-fit,minmax(320px,1fr))}
+  .tile{background:var(--panel); border:1px solid var(--border); border-radius:12px; overflow:hidden; display:flex; flex-direction:column}
+  .tile .bar{display:flex; align-items:center; justify-content:space-between; padding:8px 10px; gap:8px}
+  .tile .title{font-size:13px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex:1}
+  .tile .remove{background:transparent; border:none; color:var(--muted); font-size:16px; padding:4px 8px; cursor:pointer; border-radius:6px}
+  .tile .remove:hover{color:var(--danger); background:#ffffff10}
+  .frame{position:relative; width:100%; aspect-ratio:16/9; background:#000; cursor:pointer}
+  .frame img{position:absolute; inset:0; width:100%; height:100%; object-fit:cover}
+  .frame .play{position:absolute; inset:0; display:flex; align-items:center; justify-content:center; background:#00000055}
+  .frame .play span{width:64px; height:64px; border-radius:50%; background:#ff0000ee; display:flex; align-items:center; justify-content:center; font-size:24px; color:#fff; padding-left:4px}
+  .frame iframe{position:absolute; inset:0; width:100%; height:100%; border:0}
+  .empty{border:1px dashed var(--border); border-radius:12px; padding:48px 20px; text-align:center; color:var(--muted); font-size:14px}
+  footer{padding:14px 22px; color:var(--muted); font-size:12px; text-align:center; border-top:1px solid var(--border)}
+</style>
+</head>
+<body>
+<header>
+  <h1>Multi<span>View</span></h1>
+  <p>Paste YouTube links below and watch several <em>different</em> videos side by side. Click any tile to play it. Duplicates are ignored.</p>
+</header>
+<main>
+  <section class="controls">
+    <div class="row">
+      <input id="urlInput" type="text" placeholder="Paste a YouTube link and press Add (or Enter)">
+      <button id="addBtn">Add video</button>
+      <button id="clearBtn" class="danger">Clear all</button>
+    </div>
+    <div class="row">
+      <button id="sampleBtn" class="ghost">Load sample set</button>
+    </div>
+    <div class="hint" id="status">No videos yet — add your first link above.</div>
+  </section>
+  <section id="gridWrap">
+    <div id="grid"></div>
+    <div id="empty" class="empty">Your video wall will appear here.<br>Add links above to get started.</div>
+  </section>
+</main>
+<footer>MultiView · your list is saved in this browser only · videos play via official YouTube embeds</footer>
+
+<script>
+const grid = document.getElementById('grid');
+const empty = document.getElementById('empty');
+const input = document.getElementById('urlInput');
+const status = document.getElementById('status');
+const LS_KEY = 'multiview.videos.v1';
+
+let videos = [];
+try { videos = JSON.parse(localStorage.getItem(LS_KEY) || '[]'); } catch(e){ videos = []; }
+
+function extractId(url){
+  url = (url || '').trim();
+  if(!url) return null;
+  const m = url.match(/(?:youtube\.com\/(?:watch\?[^#]*v=|shorts\/|embed\/|live\/)|youtu\.be\/)([A-Za-z0-9_-]{11})/);
+  return m ? m[1] : null;
+}
+function save(){ localStorage.setItem(LS_KEY, JSON.stringify(videos)); }
+function render(){
+  grid.innerHTML = '';
+  empty.style.display = videos.length ? 'none' : 'block';
+  videos.forEach(v => {
+    const tile = document.createElement('div');
+    tile.className = 'tile';
+    const bar = document.createElement('div');
+    bar.className = 'bar';
+    const title = document.createElement('div');
+    title.className = 'title';
+    title.textContent = v.title || v.id;
+    title.title = 'https://youtu.be/' + v.id;
+    const rm = document.createElement('button');
+    rm.className = 'remove';
+    rm.textContent = '✕';
+    rm.title = 'Remove';
+    rm.onclick = () => { videos = videos.filter(x => x.id !== v.id); save(); render(); };
+    bar.appendChild(title); bar.appendChild(rm);
+    const frame = document.createElement('div');
+    frame.className = 'frame';
+    const thumb = document.createElement('img');
+    thumb.src = 'https://i.ytimg.com/vi/' + v.id + '/hqdefault.jpg';
+    thumb.alt = '';
+    thumb.loading = 'lazy';
+    const play = document.createElement('div');
+    play.className = 'play';
+    play.innerHTML = '<span>▶</span>';
+    frame.appendChild(thumb); frame.appendChild(play);
+    frame.onclick = () => {
+      frame.innerHTML = '';
+      const ifr = document.createElement('iframe');
+      ifr.src = 'https://www.youtube.com/embed/' + v.id + '?autoplay=1&rel=0';
+      ifr.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share';
+      ifr.allowFullscreen = true;
+      ifr.title = v.title || 'YouTube video';
+      frame.appendChild(ifr);
+      frame.style.cursor = 'default';
+    };
+    tile.appendChild(bar); tile.appendChild(frame);
+    grid.appendChild(tile);
+  });
+  status.textContent = videos.length
+    ? videos.length + (videos.length === 1 ? ' video' : ' videos') + ' on the wall — click any tile to play.'
+    : 'No videos yet — add your first link above.';
+}
+async function fetchTitle(id){
+  try{
+    const r = await fetch('https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=' + id + '&format=json');
+    if(r.ok){ const j = await r.json(); return j.title || id; }
+  }catch(e){}
+  return id;
+}
+async function addVideo(raw){
+  const id = extractId(raw);
+  if(!id){ status.textContent = 'That doesn\'t look like a YouTube link — try again.'; return; }
+  if(videos.some(v => v.id === id)){ status.textContent = 'Already on the wall — duplicates are ignored.'; return; }
+  status.textContent = 'Adding…';
+  const title = await fetchTitle(id);
+  videos.push({id, title});
+  save(); render(); input.value = ''; input.focus();
+}
+document.getElementById('addBtn').onclick = () => addVideo(input.value);
+input.addEventListener('keydown', e => { if(e.key === 'Enter') addVideo(input.value); });
+document.getElementById('clearBtn').onclick = () => { videos = []; save(); render(); };
+document.getElementById('sampleBtn').onclick = async () => {
+  const samples = ['dQw4w9WgXcQ','9bZkp7q19f0','eKFTSSKCzWA'];
+  for(const id of samples){
+    if(videos.some(v => v.id === id)) continue;
+    videos.push({id, title: await fetchTitle(id)});
+  }
+  save(); render();
+};
+render();
+</script>
+</body>
+</html>
